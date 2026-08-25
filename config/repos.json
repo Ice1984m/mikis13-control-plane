@@ -1,0 +1,27 @@
+[
+  {
+    "name": "site",
+    "repo": "Ice1984m/mikis13-site",
+    "priority": 1
+  },
+  {
+    "name": "server",
+    "repo": "Ice1984m/mikis13-server",
+    "priority": 2
+  },
+  {
+    "name": "edgehub",
+    "repo": "Ice1984m/mikis13-edgehub",
+    "priority": 3
+  },
+  {
+    "name": "autodev",
+    "repo": "Ice1984m/mikis13-autodev-hub",
+    "priority": 4
+  },
+  {
+    "name": "container",
+    "repo": "Ice1984m/mikis13-container-bot",
+    "priority": 5
+  }
+]

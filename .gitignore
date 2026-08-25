@@ -1,0 +1,14 @@
+.env
+.env.*
+*.key
+*.token
+*.pem
+*.log
+*.jsonl
+
+state/
+reports/*.tmp
+history/*.tmp
+
+openai.key
+security.env

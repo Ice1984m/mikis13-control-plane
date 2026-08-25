@@ -1,0 +1,61 @@
+name: Mikis13 Control Plane
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "15 * * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: mikis13-control-plane
+  cancel-in-progress: true
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare
+        run: |
+          chmod +x scripts/*.sh
+          chmod +x tests/*.sh
+
+      - name: Doctor
+        run: |
+          ./scripts/doctor.sh
+
+      - name: Status
+        run: |
+          ./scripts/status.sh
+
+      - name: Drift
+        continue-on-error: true
+        run: |
+          ./scripts/drift.sh
+
+      - name: E2E
+        continue-on-error: true
+        run: |
+          ./tests/e2e.sh
+
+      - name: History
+        run: |
+          ./scripts/history.sh
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: mikis13-control-plane-report
+          path: |
+            reports/
+            history/
+          retention-days: 14

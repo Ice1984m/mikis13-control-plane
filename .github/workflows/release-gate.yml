@@ -1,0 +1,27 @@
+name: Mikis13 Release Gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare
+        run: |
+          chmod +x scripts/*.sh
+          chmod +x tests/*.sh
+
+      - name: Release Gate
+        run: |
+          ./scripts/gate.sh

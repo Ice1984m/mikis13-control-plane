@@ -5,26 +5,37 @@ MAX=3
 
 for TRY in $(seq 1 "$MAX")
 do
-  echo
-  echo "Repair ronde $TRY/$MAX"
 
-  chmod +x scripts/*.sh tests/*.sh
+  echo
+  echo "================================"
+  echo " SELF REPAIR $TRY/$MAX"
+  echo "================================"
+
+  chmod +x scripts/*.sh
+
+  mkdir -p \
+    reports \
+    history \
+    backups \
+    state
 
   if ./scripts/doctor.sh
   then
-    echo "✅ Doctor geslaagd"
+    echo
+    echo "✅ SELF REPAIR PASS"
     exit 0
   fi
 
-  echo "⚠️ Doctor vond problemen"
+  echo
+  echo "⚠️ Doctor faalde."
 
-  # Repareer permissies.
-  chmod +x scripts/*.sh tests/*.sh
+  # Alleen veilige generieke repairs.
+  chmod +x scripts/*.sh
 
-  # Zorg dat rapportmappen bestaan.
-  mkdir -p reports history releases state
+  sleep 2
 
 done
 
-echo "❌ Self-repair kon probleem niet oplossen"
+echo
+echo "❌ Self repair kon een echte inhoudelijke fout niet automatisch oplossen."
 exit 1

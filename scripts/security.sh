@@ -1,44 +1,81 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-mkdir -p reports
+SITE="$(jq -r '.site_dir' config/system.json)"
 
 PATTERN='sk-proj-[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}'
 
 FOUND=0
 
+echo
+echo "=== MIKIS13 SECURITY SCAN ==="
+
+cd "$SITE"
+
+# ------------------------------------------------------------
+# Alleen bestanden controleren die Git daadwerkelijk ziet.
+#
+# Dit scant:
+# - tracked bestanden
+# - nieuwe niet-genegeerde bestanden
+#
+# Dit scant NIET:
+# - .env die correct in .gitignore staat
+# - node_modules
+# - .git
+# - andere ignored lokale secrets
+# ------------------------------------------------------------
+
 while IFS= read -r FILE
 do
+  [ -n "$FILE" ] || continue
   [ -f "$FILE" ] || continue
 
   case "$FILE" in
-    ./scripts/security.sh)
+    node_modules/*|.git/*)
       continue
       ;;
   esac
 
   if grep -E "$PATTERN" "$FILE" >/dev/null 2>&1
   then
-    echo "❌ Mogelijke echte secret: $FILE"
+    echo "❌ Mogelijke echte secret in Git-bestand: $FILE"
     FOUND=1
   fi
 
 done < <(
-  find . \
-    -type f \
-    ! -path './.git/*' \
-    ! -path './history/*' \
-    ! -path './reports/*'
+  {
+    git ls-files
+    git ls-files \
+      --others \
+      --exclude-standard
+  } |
+  sort -u
 )
 
-jq -n \
-  --arg time "$(date -u +%FT%TZ)" \
-  --argjson found "$FOUND" \
-  '{
-    timestamp:$time,
-    secret_scan_failures:$found
-  }' > reports/security.json
+# ------------------------------------------------------------
+# Extra controle: .env mag NOOIT tracked zijn.
+# ------------------------------------------------------------
 
-[ "$FOUND" -eq 0 ] || exit 1
+for SECRET_FILE in \
+  .env \
+  openai.key \
+  security.env
+do
 
-echo "✅ Security scan OK"
+  if git ls-files --error-unmatch "$SECRET_FILE" >/dev/null 2>&1
+  then
+    echo "❌ Verboden secretbestand is tracked: $SECRET_FILE"
+    FOUND=1
+  fi
+
+done
+
+if [ "$FOUND" -ne 0 ]
+then
+  echo
+  echo "❌ SECURITY SCAN FAILED"
+  exit 1
+fi
+
+echo "✅ Geen herkenbare secrets in publiceerbare Git-bestanden"

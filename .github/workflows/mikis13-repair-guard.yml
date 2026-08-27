@@ -1,0 +1,200 @@
+name: Mikis13 Repair Guard
+
+on:
+  workflow_run:
+    workflows:
+      - "Mikis13 Control Plane"
+      - "Mikis13 Release Gate"
+    types:
+      - completed
+
+  schedule:
+    - cron: "23 * * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: mikis13-repair-guard
+  cancel-in-progress: false
+
+jobs:
+
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+
+    steps:
+
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------
+      # DIRECT REPAIR NA FAILURE
+      # ------------------------------------------------
+
+      - name: Diagnose failed workflow
+        if: >
+          github.event_name == 'workflow_run' &&
+          (
+            github.event.workflow_run.conclusion == 'failure' ||
+            github.event.workflow_run.conclusion == 'cancelled' ||
+            github.event.workflow_run.conclusion == 'timed_out'
+          )
+        shell: bash
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo "Failed run: $RUN_ID"
+          echo "======================================"
+
+          gh api \
+            "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
+            --jq '
+              .jobs[]
+              |
+              {
+                id,
+                name,
+                status,
+                conclusion
+              }
+            ' || true
+
+      - name: Repair current-main failure
+        if: >
+          github.event_name == 'workflow_run' &&
+          (
+            github.event.workflow_run.conclusion == 'failure' ||
+            github.event.workflow_run.conclusion == 'cancelled' ||
+            github.event.workflow_run.conclusion == 'timed_out'
+          )
+        shell: bash
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          FAILED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -Eeuo pipefail
+
+          CURRENT_SHA="$(git rev-parse HEAD)"
+
+          echo "Failed SHA : $FAILED_SHA"
+          echo "Current SHA: $CURRENT_SHA"
+          echo "Attempt    : $ATTEMPT"
+
+          # Geen oude historische failures blijven rerunnen.
+          if [ "$FAILED_SHA" != "$CURRENT_SHA" ]; then
+              echo "ℹ️ Oude commit."
+              echo "Geen repair nodig op huidige main."
+              exit 0
+          fi
+
+          # Geen oneindige loops.
+          if [ "$ATTEMPT" -ge 3 ]; then
+              echo "🛑 Maximum 3 attempts bereikt."
+              exit 0
+          fi
+
+          echo "🔧 Failed jobs opnieuw uitvoeren..."
+
+          gh run rerun \
+            "$RUN_ID" \
+            --repo "$REPO" \
+            --failed
+
+      # ------------------------------------------------
+      # UURLIJKSE CONTROLE
+      # ------------------------------------------------
+
+      - name: Hourly health sweep
+        if: >
+          github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          CURRENT_SHA="$(git rev-parse HEAD)"
+
+          gh run list \
+            --repo "$REPO" \
+            --limit 30 \
+            --json \
+databaseId,name,status,conclusion,headSha,attempt,event \
+            > /tmp/runs.json
+
+          echo
+          echo "========== RUNS =========="
+
+          jq -r '
+            .[]
+            |
+            "\(.databaseId)
+             | \(.name)
+             | \(.event)
+             | \(.status)
+             | \(.conclusion // "-")
+             | \(.headSha[0:7])
+             | attempt=\(.attempt)"
+          ' /tmp/runs.json
+
+          mapfile -t FAILED < <(
+            jq -r \
+              --arg sha "$CURRENT_SHA" '
+                .[]
+                |
+                select(.name != "Mikis13 Repair Guard")
+                |
+                select(.headSha == $sha)
+                |
+                select(.status == "completed")
+                |
+                select(
+                  .conclusion == "failure" or
+                  .conclusion == "cancelled" or
+                  .conclusion == "timed_out"
+                )
+                |
+                select(.attempt < 3)
+                |
+                .databaseId
+              ' /tmp/runs.json
+          )
+
+          if [ "${#FAILED[@]}" -eq 0 ]; then
+              echo
+              echo "✅ Geen actuele failures."
+              exit 0
+          fi
+
+          for RUN_ID in "${FAILED[@]}"
+          do
+              echo
+              echo "🔧 Auto repair run $RUN_ID"
+
+              gh run rerun \
+                "$RUN_ID" \
+                --repo "$REPO" \
+                --failed || true
+          done
+
+      - name: Final status
+        if: always()
+        shell: bash
+        run: |
+          echo "========== FINAL STATUS =========="
+
+          gh run list \
+            --repo "$REPO" \
+            --limit 12

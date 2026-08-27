@@ -1,0 +1,120 @@
+name: Mikis13 Repair Guard
+
+on:
+  workflow_run:
+    workflows:
+      - "*"
+    types:
+      - completed
+
+  schedule:
+    - cron: "23 * * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: mikis13-repair-guard
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: >
+      github.event_name != 'workflow_run' ||
+      (
+        github.event.workflow_run.name != 'Mikis13 Repair Guard' &&
+        (
+          github.event.workflow_run.conclusion == 'failure' ||
+          github.event.workflow_run.conclusion == 'cancelled' ||
+          github.event.workflow_run.conclusion == 'timed_out'
+        )
+      )
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 10
+
+    steps:
+
+      - name: Repository checkout
+        uses: actions/checkout@v4
+
+      - name: Diagnose
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "Repository: $REPO"
+          echo "Trigger: $EVENT_NAME"
+
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+
+            echo "Failed workflow run: $RUN_ID"
+
+            gh api \
+              "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
+              --jq '
+                .jobs[]
+                | {
+                    id,
+                    name,
+                    status,
+                    conclusion
+                  }
+              '
+
+          else
+
+            echo "Scheduled health sweep"
+
+            gh run list \
+              --repo "$REPO" \
+              --limit 15
+
+          fi
+
+      - name: Safe rerun failed jobs
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "Attempt: $ATTEMPT"
+
+          if [ "$ATTEMPT" -ge 3 ]; then
+              echo "Maximum retry count bereikt."
+              exit 0
+          fi
+
+          gh run rerun \
+            "$RUN_ID" \
+            --repo "$REPO" \
+            --failed
+
+      - name: Scheduled repository status
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "Laatste runs:"
+
+          gh run list \
+            --repo "$REPO" \
+            --limit 10
